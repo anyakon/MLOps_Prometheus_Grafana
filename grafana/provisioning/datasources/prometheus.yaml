@@ -6,4 +6,18 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
-    uid: PBFA97CFB590B2093
+    uid: hw5-prometheus
+
+  - name: PostgreSQL
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: ${POSTGRES_USER}
+    uid: postgres_fraud
+    jsonData:
+      database: ${POSTGRES_DB}
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: ${POSTGRES_PASSWORD}

@@ -2,8 +2,6 @@
 
 Учебный проект обнаружения мошеннических транзакций. Kafka несёт непрерывный поток событий, CatBoost скорит их текущей моделью, а Airflow по расписанию дописывает размеченные месяцы и переобучает модель. Prometheus и Grafana показывают скорость обработки, распределение скоров и смену версии модели.
 
-Датасет можно найти [здесь](https://www.kaggle.com/competitions/teta-ml-1-2025/data). В этом занятии используется файл `train.csv` из каталога практики занятия 07. Путь задаётся переменной `TRAIN_DATA_CSV`.
-
 ---
 
 ## Архитектура
@@ -35,12 +33,12 @@ flowchart LR
 | **Kafka UI** | Просмотр топиков `transactions` и `scoring` |
 | **transaction_simulator** | Бесконечно шлёт в `transactions` случайные строки CSV. У каждой новый `transaction_id` и `transaction_time`, равный текущему моменту, формат `YYYY-MM-DD HH:MM` |
 | **fraud_detector** | Препроцессинг и инференс CatBoost. Перед каждым сообщением читает `/models/latest.txt` и подхватывает `my_catboost_<версия>.cbm` без перезапуска |
-| **scoring_writer** | Читает топик `scoring` и пишет `score`, `fraud_flag` и `model_version` в PostgreSQL |
+| **scoring_writer** | Читает топик `scoring` и пишет `score`, `fraud_flag`, `model_version`, `us_state`, `merch` и `cat_id` в PostgreSQL |
 | **PostgreSQL** | Витрина `labeled_transactions`, состояние окна `training_state` и таблица `scores` |
 | **data_loader** | При старте один раз загружает весь CSV в витрину и собирает исходное окно обучения: январь–март 2019 |
 | **airflow** | Два DAG каждые 5 минут: поставка нового размеченного месяца и переобучение CatBoost |
 | **Prometheus** | Собирает метрики `fraud_detector` (`:8000`), `scoring_writer` (`:8001`) и Node Exporter раз в секунду |
-| **Grafana** | Дашборды скоринга, записи в БД и системных метрик. Смена версии модели отмечена интервалом около 30 секунд с именем новой версии |
+| **Grafana** | Дашборды скоринга, записи в БД, системных метрик и срезов по штату и мерчанту. Смена версии модели отмечена интервалом около 30 секунд с именем новой версии |
 | **Node Exporter** | Системные метрики хоста контейнеров: CPU, память, сеть, диск |
 
 Общий том `model_registry` смонтирован в Airflow как `/opt/airflow/models` и в `fraud_detector` как `/models`. Логика задач вынесена в `pipeline/`. Файлы в `dags/` только связывают задачи.
@@ -87,8 +85,6 @@ flowchart LR
 
 ---
 
-## Технологии
-
 - **Python 3.11**
 - **ML**: CatBoost, pandas, numpy
 - **Kafka**: потоковая обработка данных
@@ -99,30 +95,29 @@ flowchart LR
 
 ---
 
-## Как запустить проект
+## Запуск
 
-### 1. Клонируйте репозиторий
+Нужен запущенный Docker Desktop. Дождитесь статуса Engine running: пока движок не готов, `docker compose` зависает или падает с `ECONNRESET`. Если Docker Desktop не запускает движок, перезапустите его от имени администратора. При ошибке WSL выполните `wsl --shutdown` и снова запустите Docker Desktop.
 
-```bash
-git clone https://github.com/NikitaMalykhin/mlops_realtime_fraud_detector_monitoring.git
+```powershell
+git clone <url-репозитория>
 cd mlops_realtime_fraud_detector_monitoring
+copy .env.example .env
 ```
 
-### 2. Создайте `.env` файл
+В `.env` укажите полный путь к размеченному `train.csv`:
 
-```bash
-cp .env.example .env
+```text
+TRAIN_DATA_CSV=F:/путь/к/train.csv
 ```
 
-В `TRAIN_DATA_CSV` укажите путь к размеченному `train.csv` на вашей машине.
+Путь с пробелами указывать можно. Файл должен существовать до запуска: он монтируется в `data_loader` и `transaction_simulator`.
 
-### 3. Запустите контейнеры
-
-```bash
+```powershell
 docker compose up --build
 ```
 
-Нужны [Docker](https://docs.docker.com/engine/install/) и Docker Compose. Первый запуск скачивает образы и загружает витрину, это занимает несколько минут.
+Первый запуск долгий: скачиваются образы, `data_loader` грузит CSV в Postgres. Остановить: `Ctrl+C`, затем `docker compose down`. Данные сохранить. Полный сброс: `docker compose down -v`.
 
 ## Доступные сервисы
 
@@ -157,6 +152,9 @@ docker compose exec postgres psql -U fraud_user -d fraud_db
 | score | FLOAT | Вероятность мошенничества, порог 0.5 |
 | fraud_flag | INT | 1, если score больше 0.5, иначе 0 |
 | model_version | TEXT | Версия CatBoost, которая посчитала скор |
+| us_state | TEXT | Штат транзакции |
+| merch | TEXT | Мерчант |
+| cat_id | TEXT | Категория |
 | created_at | TIMESTAMP | Время записи |
 
 `labeled_transactions` — витрина размеченных транзакций. `training_state` хранит границы трёхмесячного окна обучения и месяц следующего батча.
@@ -183,7 +181,64 @@ docker compose exec airflow ls -la /opt/airflow/models
 1. В Kafka UI топик `transactions` пополняется каждые 0.1 секунды, топик `scoring` — ответами модели.
 2. В Airflow откройте `supply_labeled_batch` и `retrain_catboost`. Кнопка Trigger запускает прогон сразу.
 3. После публикации модели новые сообщения в `scores` получают свежий `model_version`.
-4. В Grafana откройте Fraud Detection Dashboard и Scoring Dashboard. На графиках скоров смена модели видна как отметка примерно в 30 секунд с подписью `model_version`. Node Metrics показывает CPU, память, сеть и диск.
+4. В Grafana откройте «Скоринг потока» и «Запись скоров». Пока симулятор шлёт поток, графики скорости растут. После DAG переобучения на «Скоринг потока» появляется отметка около 30 секунд с именем новой версии. «Системные метрики» показывает CPU, память, сеть и диск.
+
+## Проверка
+
+1. `docker compose ps` показывает `fraud_detector`, `scoring_writer`, `prometheus`, `grafana` и `node-exporter` в состоянии `running`.
+2. Откройте http://localhost:8000/metrics дважды с паузой в несколько секунд: `transactions_total` увеличивается.
+3. В Prometheus выполните `rate(transactions_total[1m])` — значение больше нуля, пока идёт поток. На странице http://localhost:9090/targets все цели `UP`.
+4. В Grafana на «Скоринг потока» и «Запись скоров» есть линии, а не пустые панели.
+5. Запустите в Airflow `supply_labeled_batch`, затем `retrain_catboost`. После публикации новой модели запрос `model_version_updates_total` в Prometheus увеличивается, а на «Скоринг потока» появляется отметка с новой версией.
+6. В таблице «Запись скоров» появляется строка с новой версией модели после того, как `scoring_writer` запишет первые скоры.
+
+---
+
+## Метрики
+
+`fraud_detector`, http://localhost:8000/metrics
+
+| Метрика | Зачем |
+|---|---|
+| `transactions_total` | Счётчик обработанных транзакций |
+| `transaction_processing_seconds` | Время обработки одной транзакции |
+| `fraud_score` | Гистограмма скоров |
+| `fraud_ratio` | Доля транзакций со скором выше 0.5 |
+| `model_version_updates_total{version}` | Счётчик смены версии модели |
+| `high_risk_transactions_total` | Счётчик скоров не ниже 0.9. Этой метрики нет в коде семинара: доля фрода по порогу 0.5 не показывает всплеск самых опасных скоров. Смотреть на графике «Очень высокий скор» дашборда «Скоринг потока» |
+
+`scoring_writer`, http://localhost:8001/metrics
+
+| Метрика | Зачем |
+|---|---|
+| `scorings_total` | Число записанных скоров |
+| `scoring_db_write_seconds` | Время записи в PostgreSQL |
+| `fraud_detected_total` | Число записанных транзакций с флагом фрода |
+| `scoring_fraud_score` | Гистограмма записанных скоров |
+
+Node Exporter, порт 9100 внутри сети: CPU, память, сеть, диск.
+
+## Дашборды
+
+Появляются сами после старта Grafana, http://localhost:3000 (`admin` / `admin`).
+
+| Дашборд | Ссылка | Что смотреть |
+|---|---|---|
+| Скоринг потока | http://localhost:3000/d/hw5-scoring-stream | скорость потока, время обработки, доля фрода, распределение скоров, очень высокий скор, отметка версии модели |
+| Запись скоров | http://localhost:3000/d/hw5-score-writer | скорость и время записи, число фрода, распределение записанных скоров, таблица числа скоров и доли фрода по `model_version` из PostgreSQL |
+| Системные метрики | http://localhost:3000/d/hw5-node | CPU, память, сеть, диск |
+| Срезы транзакций | http://localhost:3000/d/hw5-slices | фильтры штат и мерчант, плотность скоров и TPS выбранных транзакций, доля фрода по `cat_id` за последние 1000 транзакций, доля фрода по часу суток |
+
+Источник Prometheus подключается сам. Источник PostgreSQL тоже: база `fraud_db`, пользователь из `.env`.
+
+## Алерты
+
+Правила лежат в `grafana/provisioning/alerting/rules.yaml` и видны в Grafana → Alerting. Доставка в Telegram или почту не настроена.
+
+| Правило | Порог | Как проверить |
+|---|---|---|
+| Доля фрода выше 1% | `fraud_ratio > 0.01` дольше 30 секунд | Открыть Alerting. Если на дашборде доля выше 1%, статус Firing |
+| Поток транзакций остановился | `rate(transactions_total[1m]) < 0.05` дольше 30 секунд | `docker compose stop transaction_simulator`. Через 1–2 минуты правило Firing. `docker compose start transaction_simulator` возвращает Normal |
 
 ### Очистка
 

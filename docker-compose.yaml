@@ -234,6 +234,8 @@ services:
     image: grafana/grafana:latest
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
@@ -244,6 +246,7 @@ services:
       - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=1s
     depends_on:
       - prometheus
+      - postgres
     networks:
       - ml-scorer
 

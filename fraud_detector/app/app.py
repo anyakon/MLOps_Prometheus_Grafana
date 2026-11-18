@@ -52,6 +52,10 @@ MODEL_VERSION_UPDATES = Counter(
     'Смена версии модели при горячей подмене',
     ['version'],
 )
+HIGH_RISK_COUNT = Counter(
+    'high_risk_transactions_total',
+    'Транзакции со скором не ниже 0.9',
+)
 
 
 class ProcessingService:
@@ -94,7 +98,8 @@ class ProcessingService:
 
             # Извлекаем ID и данные
             transaction_id = data['transaction_id']
-            input_df = pd.DataFrame([data['data']])
+            payload = data['data']
+            input_df = pd.DataFrame([payload])
 
             # Препроцессинг и предсказание
             processed_df = run_preproc(input_df)
@@ -106,12 +111,17 @@ class ProcessingService:
             self.total_transactions += 1
             if score > 0.5:
                 self.fraud_transactions += 1
+            if score >= 0.9:
+                HIGH_RISK_COUNT.inc()
             FRAUD_RATIO.set(self.fraud_transactions / self.total_transactions)
             self._record_model_version(model_version)
 
             # Добавляем ID и версию модели, которая отскорила запрос
             submission['transaction_id'] = transaction_id
             submission['model_version'] = model_version
+            submission['us_state'] = payload.get('us_state')
+            submission['merch'] = payload.get('merch')
+            submission['cat_id'] = payload.get('cat_id')
 
             # Отправка результата в топик scoring
             self.producer.produce(

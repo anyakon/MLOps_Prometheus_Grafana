@@ -85,6 +85,8 @@ flowchart LR
 
 ---
 
+## Технологии
+
 - **Python 3.11**
 - **ML**: CatBoost, pandas, numpy
 - **Kafka**: потоковая обработка данных
@@ -100,8 +102,8 @@ flowchart LR
 Нужен запущенный Docker Desktop. Дождитесь статуса Engine running: пока движок не готов, `docker compose` зависает или падает с `ECONNRESET`. Если Docker Desktop не запускает движок, перезапустите его от имени администратора. При ошибке WSL выполните `wsl --shutdown` и снова запустите Docker Desktop.
 
 ```powershell
-git clone <url-репозитория>
-cd mlops_realtime_fraud_detector_monitoring
+git clone https://github.com/anyakon/MLOps_Prometheus_Grafana.git
+cd MLOps_Prometheus_Grafana
 copy .env.example .env
 ```
 
